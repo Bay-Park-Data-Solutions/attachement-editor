@@ -410,6 +410,12 @@
                     <p id="errorMessage" style="margin-top: 8px;"></p>
                 </div>
             </div>
+
+            <!-- Debug info (hidden by default) -->
+            <div id="debugInfo" style="display: none; margin-top: 2rem; padding: 1rem; background: #f5f5f5; border-radius: 8px; border-left: 4px solid #999; font-size: 12px; font-family: monospace; color: #666;">
+                <p style="margin: 0 0 8px 0;"><strong>Debug Info:</strong></p>
+                <p id="debugText" style="margin: 0; word-break: break-all;"></p>
+            </div>
         </div>
     </div>
 
@@ -432,14 +438,44 @@
         // Initialize the app
         async function init() {
             try {
-                // Check if user is already authenticated via Portal
-                const userInfo = await getUserInfo();
-                if (!userInfo) {
-                    showError('User not authenticated. Please log in through ArcGIS Hub.');
+                // Try multiple methods to get the username
+                let username = null;
+
+                // Method 1: Try to extract from Hub page (look for "This is your username:" text)
+                username = extractUsernameFromHub();
+                console.log('Username from Hub:', username);
+
+                // Method 2: Try URL parameter
+                if (!username) {
+                    username = getUrlParameter('username');
+                    console.log('Username from URL parameter:', username);
+                }
+
+                // Method 3: Try Portal API (may fail in iframe due to CORS)
+                if (!username) {
+                    const userInfo = await getUserInfo();
+                    if (userInfo) {
+                        username = userInfo.username;
+                        console.log('Username from Portal API:', username);
+                    }
+                }
+
+                // Method 4: Try to get from parent window (if accessible)
+                if (!username && window.parent !== window) {
+                    username = extractUsernameFromParent();
+                    console.log('Username from parent window:', username);
+                }
+
+                if (!username) {
+                    showError('User not authenticated. Please ensure you are logged in to ArcGIS Hub and the app has access to your username.');
                     return;
                 }
 
-                currentUser = userInfo;
+                currentUser = {
+                    username: username.trim(),
+                    fullName: username.trim()
+                };
+
                 await loadUserProfile();
                 showContent();
             } catch (error) {
@@ -448,10 +484,105 @@
             }
         }
 
-        // Get current user from Portal
+        // Extract username from Hub page (looks for "This is your username:" pattern)
+        function extractUsernameFromHub() {
+            try {
+                // Check all text nodes in parent and current document
+                const searchDocs = [document];
+                
+                // Try to access parent window if in iframe
+                if (window.parent !== window) {
+                    try {
+                        // Check if we can access parent - this may fail due to CORS
+                        if (window.parent.document) {
+                            searchDocs.push(window.parent.document);
+                        }
+                    } catch (e) {
+                        console.log('Cannot access parent document (expected in cross-origin iframe)');
+                    }
+                }
+
+                for (const doc of searchDocs) {
+                    const bodyText = doc.body.innerText;
+                    
+                    // Look for "This is your username:" followed by the username
+                    const usernameMatch = bodyText.match(/This is your username:\s*\n\s*([^\n\r]+)/);
+                    if (usernameMatch && usernameMatch[1]) {
+                        return usernameMatch[1].trim();
+                    }
+
+                    // Alternative: look for username in input fields
+                    const inputs = doc.querySelectorAll('input[type="text"], input[readonly]');
+                    for (const input of inputs) {
+                        const label = input.previousElementSibling || input.parentElement.querySelector('label');
+                        if (label && label.textContent.includes('username')) {
+                            if (input.value) {
+                                return input.value.trim();
+                            }
+                        }
+                    }
+
+                    // Look for any text that looks like a username (format: word_word_word)
+                    const usernamePattern = /([a-zA-Z0-9_]+_[a-zA-Z0-9_]+)/g;
+                    const potentialUsernames = bodyText.match(usernamePattern);
+                    if (potentialUsernames) {
+                        // Return the first one that looks like our pattern
+                        for (const potential of potentialUsernames) {
+                            if (potential.includes('_')) {
+                                return potential;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error extracting username from Hub:', error);
+            }
+            return null;
+        }
+
+        // Try to extract username from parent window
+        function extractUsernameFromParent() {
+            try {
+                if (window.parent === window) return null;
+
+                // Check for common global variables that might contain user info
+                const parentWindow = window.parent;
+                
+                if (parentWindow.currentUser) {
+                    return parentWindow.currentUser.username;
+                }
+                if (parentWindow.user) {
+                    return parentWindow.user.username || parentWindow.user.name;
+                }
+                if (parentWindow.hubUser) {
+                    return parentWindow.hubUser.username;
+                }
+            } catch (error) {
+                console.log('Cannot access parent window variables (expected)');
+            }
+            return null;
+        }
+
+        // Get URL parameter
+        function getUrlParameter(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        // Get current user from Portal (fallback, may fail in iframe)
         async function getUserInfo() {
             try {
-                const response = await fetch(`${CONFIG.portalUrl}/sharing/rest/community/self?f=json`);
+                const response = await fetch(`${CONFIG.portalUrl}/sharing/rest/community/self?f=json`, {
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    return null;
+                }
+
                 const data = await response.json();
 
                 if (data.error) {
@@ -464,7 +595,7 @@
                     fullName: data.fullName || data.username
                 };
             } catch (error) {
-                console.error('Error getting user info:', error);
+                console.error('Error getting user info from Portal:', error);
                 return null;
             }
         }
@@ -708,6 +839,17 @@
             document.getElementById('contentState').style.display = 'none';
             document.getElementById('errorState').style.display = 'block';
             document.getElementById('errorMessage').textContent = message;
+
+            // Show debug info
+            const debugInfo = [
+                `URL: ${window.location.href}`,
+                `In iframe: ${window.parent !== window}`,
+                `Portal URL: ${CONFIG.portalUrl}`,
+                `Feature Service: ${CONFIG.featureServiceUrl}`,
+                `User Agent: ${navigator.userAgent.substring(0, 50)}...`
+            ];
+            document.getElementById('debugInfo').style.display = 'block';
+            document.getElementById('debugText').textContent = debugInfo.join('\n');
         }
 
         function showMessage(message, type = 'info') {
