@@ -130,8 +130,9 @@
                 // Check if there's an error (user not logged in)
                 if (data.error) {
                     console.log('Portal error:', data.error);
-                    // Redirect to Portal login
-                    const loginUrl = 'https://sjca-hub.maps.arcgis.com/home/signin.html?redirect=' + encodeURIComponent(window.location.href);
+                    // Redirect to Portal login with proper redirect
+                    const appUrl = 'https://bay-park-data-solutions.github.io/attachement-editor/';
+                    const loginUrl = 'https://sjca-hub.maps.arcgis.com/sharing/rest/oauth2/authorize?client_id=arcgisonline&response_type=token&expiration=20160&redirect_uri=' + encodeURIComponent(appUrl) + '&state=' + encodeURIComponent(appUrl);
                     window.location.href = loginUrl;
                     return;
                 }
@@ -145,8 +146,9 @@
             } catch (error) {
                 console.error('Auth error:', error);
                 // If fetch fails, also try login
-                const loginUrl = 'https://sjca-hub.maps.arcgis.com/home/signin.html?redirect=' + encodeURIComponent(window.location.href);
-                showError('Please log in first. <a href="' + loginUrl + '">Click here to login</a>');
+                const appUrl = 'https://bay-park-data-solutions.github.io/attachement-editor/';
+                const loginUrl = 'https://sjca-hub.maps.arcgis.com/sharing/rest/oauth2/authorize?client_id=arcgisonline&response_type=token&expiration=20160&redirect_uri=' + encodeURIComponent(appUrl) + '&state=' + encodeURIComponent(appUrl);
+                showError('Please log in. <a href="' + loginUrl + '" target="_blank">Click here to login</a>');
                 throw error;
             }
         }
