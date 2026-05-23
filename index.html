@@ -125,12 +125,18 @@
                     credentials: 'include'
                 });
                 const data = await response.json();
-                console.log('User response:', data);
+                console.log('Full response object:', JSON.stringify(data, null, 2));
+                console.log('data.username:', data.username);
+                console.log('data.error:', data.error);
+                
+                if (data.error) {
+                    throw new Error(`Portal error: ${data.error.message || JSON.stringify(data.error)}`);
+                }
                 
                 if (data.username) {
                     return { username: data.username, fullName: data.fullName || data.username };
                 }
-                throw new Error('Not logged in or user data unavailable');
+                throw new Error('No username in response');
             } catch (error) {
                 console.error('Auth error:', error);
                 throw error;
