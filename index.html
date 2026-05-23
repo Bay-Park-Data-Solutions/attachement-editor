@@ -143,60 +143,46 @@
             "esri/request"
         ], function(OAuthInfo, esriId, esriRequest) {
 
+            // Register OAuth app
+            const info = new OAuthInfo({
+                appId: "8otS7Td5TdxbVjOG",
+                portalUrl: CONFIG.portalUrl,
+                authNamespace: "portal_oauth_inline",
+                expiration: 20160,
+                popup: true
+            });
+
+            esriId.registerOAuthInfos([info]);
+
             async function init() {
                 try {
                     showLoading();
                     
-                    // Check if user is already authenticated
-                    let credential = esriId.getCredential(CONFIG.portalUrl);
-                    
-                    if (!credential) {
-                        console.log('No credential found, attempting to get from Portal');
-                        try {
-                            // Try to get user info without explicit login
-                            const response = await esriRequest({
-                                url: `${CONFIG.portalUrl}/sharing/rest/community/self`,
-                                content: { f: 'json' },
-                                usePost: false
-                            });
-                            
-                            if (response.data && response.data.username) {
-                                currentUser = {
-                                    username: response.data.username,
-                                    fullName: response.data.fullName || response.data.username
-                                };
-                                console.log('✓ User authenticated:', currentUser.username);
-                                await loadUserProfile();
-                                showContent();
-                            } else {
-                                showError('Unable to detect user session. Please ensure you are logged into ArcGIS.');
-                            }
-                        } catch (error) {
-                            console.error('Auth error:', error);
-                            showError('Authentication failed. ' + error.message);
+                    // Use the same pattern as Survey123: get ${username} from Portal
+                    // This works because the user is already authenticated via Hub
+                    try {
+                        const response = await esriRequest({
+                            url: `${CONFIG.portalUrl}/sharing/rest/community/self`,
+                            content: { f: 'json' }
+                        });
+                        
+                        console.log('Community self response:', response.data);
+                        
+                        if (response.data && response.data.username) {
+                            currentUser = {
+                                username: response.data.username,
+                                fullName: response.data.fullName || response.data.username
+                            };
+                            console.log('✓ User authenticated (like Survey123):', currentUser.username);
+                            await loadUserProfile();
+                            showContent();
+                        } else {
+                            showError('Unable to detect user. Please ensure you are logged into ArcGIS Portal.');
                         }
-                    } else {
-                        // User has credential - get their info
-                        try {
-                            const response = await esriRequest({
-                                url: `${CONFIG.portalUrl}/sharing/rest/community/self`,
-                                content: { f: 'json' },
-                                usePost: false
-                            });
-                            
-                            if (response.data && response.data.username) {
-                                currentUser = {
-                                    username: response.data.username,
-                                    fullName: response.data.fullName || response.data.username
-                                };
-                                console.log('✓ User authenticated:', currentUser.username);
-                                await loadUserProfile();
-                                showContent();
-                            }
-                        } catch (error) {
-                            console.error('Error getting user info:', error);
-                            showError('Failed to load user information: ' + error.message);
-                        }
+                    } catch (error) {
+                        console.error('Authentication error:', error);
+                        // Try OAuth as fallback
+                        showError('Please ensure you are logged into your ArcGIS account. ' + error.message);
                     }
                 } catch (error) {
                     console.error('Init error:', error);
