@@ -176,14 +176,27 @@
                             showError('Authentication failed. ' + error.message);
                         }
                     } else {
-                        // User has credential
-                        currentUser = {
-                            username: credential.userId,
-                            fullName: credential.userId
-                        };
-                        console.log('✓ User authenticated:', currentUser.username);
-                        await loadUserProfile();
-                        showContent();
+                        // User has credential - get their info
+                        try {
+                            const response = await esriRequest({
+                                url: `${CONFIG.portalUrl}/sharing/rest/community/self`,
+                                content: { f: 'json' },
+                                usePost: false
+                            });
+                            
+                            if (response.data && response.data.username) {
+                                currentUser = {
+                                    username: response.data.username,
+                                    fullName: response.data.fullName || response.data.username
+                                };
+                                console.log('✓ User authenticated:', currentUser.username);
+                                await loadUserProfile();
+                                showContent();
+                            }
+                        } catch (error) {
+                            console.error('Error getting user info:', error);
+                            showError('Failed to load user information: ' + error.message);
+                        }
                     }
                 } catch (error) {
                     console.error('Init error:', error);
