@@ -118,11 +118,23 @@
 
         async function getToken() {
             try {
-                const response = await fetch('https://sjca.maps.arcgis.com/sharing/rest/community/self?f=json', {
-                    credentials: 'include'  // Include cookies from Portal session
+                // Check if Portal user info is available in window object
+                // Hub and Portal expose user context globally
+                console.log('Checking window for Portal context...');
+                console.log('window.arcgisAuth:', window.arcgisAuth);
+                console.log('window.portalUser:', window.portalUser);
+                console.log('window.esriConfig:', window.esriConfig);
+                
+                // Try to get from arcgis.com portal directly with credentials
+                const response = await fetch('https://sjca.maps.arcgis.com/sharing/rest/community/self?f=json&referer=' + window.location.origin, {
+                    credentials: 'include',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
                 });
                 const data = await response.json();
                 console.log('Self response:', data);
+                
                 if (data.username) {
                     return { username: data.username, fullName: data.fullName || data.username };
                 }
