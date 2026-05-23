@@ -194,24 +194,42 @@
         }
 
         function initiateOAuthLogin() {
-            console.log('Initiating OAuth login via hidden iframe...');
+            console.log('Initiating OAuth login via popup window...');
             const redirectUri = encodeURIComponent(CONFIG.oauthCallbackUrl);
             const oauthUrl = `${CONFIG.portalUrl}/sharing/oauth2/authorize?client_id=${CONFIG.oauthClientId}&response_type=token&expiration=20160&redirect_uri=${redirectUri}`;
-            console.log('Loading OAuth in hidden iframe');
             
-            // Load OAuth in hidden iframe to avoid X-Frame-Options block
-            const iframe = document.getElementById('oauthFrame');
-            iframe.src = oauthUrl;
+            // Open popup for OAuth
+            const popup = window.open(oauthUrl, 'arcgis_login', 'width=600,height=700,left=100,top=100');
             
-            // When user completes OAuth, callback URL redirects which triggers our callback
-            // We'll check for token in a moment
-            setTimeout(() => {
+            if (!popup) {
+                showError('Popup was blocked. Please allow popups for this site and try again.');
+                return;
+            }
+            
+            console.log('OAuth popup opened');
+            
+            // Check for token periodically
+            let checkCount = 0;
+            const checkInterval = setInterval(() => {
+                checkCount++;
+                
+                // Stop checking after 5 minutes
+                if (checkCount > 300) {
+                    clearInterval(checkInterval);
+                    return;
+                }
+                
                 const token = getStoredToken();
                 if (token) {
-                    console.log('✓ Token received from OAuth flow');
-                    init();
+                    console.log('✓ Token detected, closing popup');
+                    clearInterval(checkInterval);
+                    if (!popup.closed) {
+                        popup.close();
+                    }
+                    // Give it a moment to ensure token is saved
+                    setTimeout(() => init(), 500);
                 }
-            }, 500);
+            }, 1000);
         }
 
         async function init() {
