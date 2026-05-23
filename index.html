@@ -140,7 +140,7 @@
 
     <script>
         const CONFIG = {
-            featureServiceUrl: 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Locations/FeatureServer/0',
+            featureServiceUrl: 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0',
             portalUrl: 'https://sjca.maps.arcgis.com',
             oauthClientId: '8otS7Td5TdxbVjOG',
             oauthCallbackUrl: window.location.origin + window.location.pathname + 'oauth-callback.html'
@@ -316,9 +316,9 @@
         }
 
         function updateProfileDisplay() {
-            const memberName = currentFeature.attributes.First_Name || 'Member';
+            const memberName = currentFeature.attributes.full_name || 'Member';
             const memberOrg = currentFeature.attributes.Organization_Name || 'SJCA';
-            const initials = (memberName.charAt(0) || 'M') + (currentFeature.attributes.Last_Name?.charAt(0) || 'M');
+            const initials = (memberName.charAt(0) || 'M') + (memberName.split(' ')[1]?.charAt(0) || 'M');
 
             document.getElementById('memberName').textContent = memberName;
             document.getElementById('memberOrg').textContent = memberOrg;
