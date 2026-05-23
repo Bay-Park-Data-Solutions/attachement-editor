@@ -125,20 +125,28 @@
                     credentials: 'include'
                 });
                 const data = await response.json();
-                console.log('Full response object:', JSON.stringify(data, null, 2));
-                console.log('data.username:', data.username);
-                console.log('data.error:', data.error);
+                console.log('Full response:', data);
                 
+                // Check if there's an error (user not logged in)
                 if (data.error) {
-                    throw new Error(`Portal error: ${data.error.message || JSON.stringify(data.error)}`);
+                    console.log('Portal error:', data.error);
+                    // Redirect to Portal login
+                    const loginUrl = 'https://sjca.maps.arcgis.com/home/signin.html?redirect=' + encodeURIComponent(window.location.href);
+                    window.location.href = loginUrl;
+                    return;
                 }
                 
-                if (data.username) {
-                    return { username: data.username, fullName: data.fullName || data.username };
+                if (!data.username) {
+                    throw new Error('No username in response: ' + JSON.stringify(data));
                 }
-                throw new Error('No username in response');
+                
+                console.log('✓ Logged in as:', data.username);
+                return { username: data.username, fullName: data.fullName || data.username };
             } catch (error) {
                 console.error('Auth error:', error);
+                // If fetch fails, also try login
+                const loginUrl = 'https://sjca.maps.arcgis.com/home/signin.html?redirect=' + encodeURIComponent(window.location.href);
+                showError('Please log in first. <a href="' + loginUrl + '">Click here to login</a>');
                 throw error;
             }
         }
@@ -379,7 +387,7 @@
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('contentState').style.display = 'none';
             document.getElementById('errorState').style.display = 'block';
-            document.getElementById('errorMessage').textContent = msg;
+            document.getElementById('errorMessage').innerHTML = msg;
         }
 
         init();
