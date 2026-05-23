@@ -159,30 +159,27 @@
                     showLoading();
                     
                     // Use the same pattern as Survey123: get ${username} from Portal
-                    // This works because the user is already authenticated via Hub
                     try {
-                        const response = await esriRequest({
-                            url: `${CONFIG.portalUrl}/sharing/rest/community/self`,
-                            content: { f: 'json' }
+                        const response = await esriRequest(`${CONFIG.portalUrl}/sharing/rest/community/self`, {
+                            query: { f: 'json' }
                         });
                         
-                        console.log('Community self response:', response.data);
+                        console.log('Community self response:', response);
                         
                         if (response.data && response.data.username) {
                             currentUser = {
                                 username: response.data.username,
                                 fullName: response.data.fullName || response.data.username
                             };
-                            console.log('✓ User authenticated (like Survey123):', currentUser.username);
+                            console.log('✓ User authenticated:', currentUser.username);
                             await loadUserProfile();
                             showContent();
                         } else {
-                            showError('Unable to detect user. Please ensure you are logged into ArcGIS Portal.');
+                            showError('Unable to detect username. Please ensure you are logged into ArcGIS.');
                         }
                     } catch (error) {
-                        console.error('Authentication error:', error);
-                        // Try OAuth as fallback
-                        showError('Please ensure you are logged into your ArcGIS account. ' + error.message);
+                        console.error('Auth error:', error);
+                        showError('Authentication error: ' + error.message);
                     }
                 } catch (error) {
                     console.error('Init error:', error);
@@ -193,13 +190,10 @@
             async function loadUserProfile() {
                 try {
                     const whereClause = `username = '${currentUser.username}'`;
-                    const queryUrl = CONFIG.featureServiceUrl + '/query';
-
                     console.log('Querying:', whereClause);
 
-                    const response = await esriRequest({
-                        url: queryUrl,
-                        content: {
+                    const response = await esriRequest(CONFIG.featureServiceUrl + '/query', {
+                        query: {
                             where: whereClause,
                             f: 'json',
                             outFields: '*'
@@ -229,9 +223,10 @@
                 try {
                     const attachmentsUrl = CONFIG.featureServiceUrl + `/${currentFeature.attributes.OBJECTID}/attachments/query`;
 
-                    const response = await esriRequest({
-                        url: attachmentsUrl,
-                        content: { f: 'json' }
+                    console.log('Loading attachments:', attachmentsUrl);
+
+                    const response = await esriRequest(attachmentsUrl, {
+                        query: { f: 'json' }
                     });
 
                     console.log('Attachments:', response.data);
