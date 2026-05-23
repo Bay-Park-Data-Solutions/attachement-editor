@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OAuth Callback</title>
+</head>
+<body>
+    <p>Processing login...</p>
+    <script>
+        // The OAuth redirect brings the token in the URL hash
+        // We just need to redirect back to the main app with the token intact
+        const hash = window.location.hash;
+        if (hash) {
+            // Redirect to index.html with the token hash
+            window.location = './index.html' + hash;
+        } else {
+            // No token received
+            window.location = './index.html';
+        }
+    </script>
+</body>
+</html>

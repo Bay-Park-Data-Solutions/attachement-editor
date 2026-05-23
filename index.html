@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SJCA Member Profile - Manage Photos</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -278,6 +277,24 @@
             cursor: not-allowed;
         }
 
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background 0.15s;
+        }
+
+        .btn-login:hover {
+            background: #5568d3;
+        }
+
         .loading {
             text-align: center;
             padding: 2rem;
@@ -332,8 +349,27 @@
             display: block;
         }
 
-        .drag-over {
-            opacity: 0.5;
+        .login-card {
+            text-align: center;
+        }
+
+        .login-card h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .login-card p {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .login-note {
+            font-size: 12px;
+            color: #999;
+            margin-top: 1rem;
         }
 
         @media (max-width: 640px) {
@@ -366,10 +402,24 @@
 
             <div id="messageBox" class="message"></div>
 
-            <div id="loadingState" class="loading" style="display: none;">
-                <div class="spinner"></div> Loading your profile...
+            <!-- LOGIN STATE -->
+            <div id="loginState">
+                <div class="login-card">
+                    <h2>Sign in to manage your photos</h2>
+                    <p>You need to sign in with your ArcGIS account to edit your profile images.</p>
+                    <button class="btn-login" id="loginBtn">Sign in with ArcGIS</button>
+                    <p class="login-note">Your organization's ArcGIS credentials are required</p>
+                </div>
             </div>
 
+            <!-- LOADING STATE -->
+            <div id="loadingState" style="display: none;">
+                <div class="loading">
+                    <div class="spinner"></div> Loading your profile...
+                </div>
+            </div>
+
+            <!-- CONTENT STATE -->
             <div id="contentState" style="display: none;">
                 <div id="profileInfo" class="profile-info" style="display: none;">
                     <div class="avatar" id="userAvatar">--</div>
@@ -392,7 +442,7 @@
                 <div>
                     <label class="section-label">Add photos</label>
                     <div class="upload-zone" id="uploadZone">
-                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                        <i class="upload-icon">☁️</i>
                         <p class="upload-text">Click to upload or drag and drop</p>
                         <p class="upload-hint">PNG, JPG, GIF up to 5MB each</p>
                     </div>
@@ -404,29 +454,27 @@
                 </div>
             </div>
 
+            <!-- ERROR STATE -->
             <div id="errorState" style="display: none;">
                 <div class="error">
                     <strong>Unable to load your profile</strong>
                     <p id="errorMessage" style="margin-top: 8px;"></p>
                 </div>
             </div>
-
-            <!-- Debug info (hidden by default) -->
-            <div id="debugInfo" style="display: none; margin-top: 2rem; padding: 1rem; background: #f5f5f5; border-radius: 8px; border-left: 4px solid #999; font-size: 12px; font-family: monospace; color: #666;">
-                <p style="margin: 0 0 8px 0;"><strong>Debug Info:</strong></p>
-                <p id="debugText" style="margin: 0; word-break: break-all;"></p>
-            </div>
         </div>
     </div>
 
     <input type="file" id="fileInput" accept="image/*,.pdf" multiple>
 
-    <script src="https://js.arcgis.com/4.28/"></script>
     <script>
-        // Configuration
+        // CONFIGURATION
         const CONFIG = {
+            // Feature Service
             featureServiceUrl: 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Locations/FeatureServer/0',
-            portalUrl: 'https://sjca.maps.arcgis.com'
+            portalUrl: 'https://sjca.maps.arcgis.com',
+            // OAuth (same as your Location Editor)
+            oauthClientId: 'Wd85I6OWMyGPB5L1',
+            oauthCallbackUrl: window.location.origin + window.location.pathname + 'oauth-callback.html'
         };
 
         let currentUser = null;
@@ -435,48 +483,63 @@
         let newAttachmentsToUpload = [];
         let deletedAttachmentIds = [];
 
+        // Check if we're coming back from OAuth
+        function checkOAuthCallback() {
+            const params = new URLSearchParams(window.location.hash.substring(1));
+            const token = params.get('access_token');
+            const expiresIn = params.get('expires_in');
+            
+            if (token) {
+                localStorage.setItem('arcgis_token', token);
+                localStorage.setItem('arcgis_token_expires', Date.now() + (expiresIn * 1000));
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+                init();
+            }
+        }
+
+        // Get stored OAuth token
+        function getStoredToken() {
+            const token = localStorage.getItem('arcgis_token');
+            const expires = localStorage.getItem('arcgis_token_expires');
+            
+            if (token && expires && Date.now() < parseInt(expires)) {
+                return token;
+            }
+            return null;
+        }
+
+        // Initiate OAuth login
+        function initiateOAuthLogin() {
+            const redirectUri = encodeURIComponent(CONFIG.oauthCallbackUrl);
+            const oauthUrl = `${CONFIG.portalUrl}/sharing/oauth2/authorize?client_id=${CONFIG.oauthClientId}&response_type=token&expiration=20160&redirect_uri=${redirectUri}`;
+            window.location.href = oauthUrl;
+        }
+
         // Initialize the app
         async function init() {
             try {
-                // Try multiple methods to get the username
-                let username = null;
-
-                // Method 1: Try to extract from Hub page (look for "This is your username:" text)
-                username = extractUsernameFromHub();
-                console.log('Username from Hub:', username);
-
-                // Method 2: Try URL parameter
-                if (!username) {
-                    username = getUrlParameter('username');
-                    console.log('Username from URL parameter:', username);
-                }
-
-                // Method 3: Try Portal API (may fail in iframe due to CORS)
-                if (!username) {
-                    const userInfo = await getUserInfo();
-                    if (userInfo) {
-                        username = userInfo.username;
-                        console.log('Username from Portal API:', username);
-                    }
-                }
-
-                // Method 4: Try to get from parent window (if accessible)
-                if (!username && window.parent !== window) {
-                    username = extractUsernameFromParent();
-                    console.log('Username from parent window:', username);
-                }
-
-                if (!username) {
-                    showError('User not authenticated. Please ensure you are logged in to ArcGIS Hub and the app has access to your username.');
+                showLoading();
+                
+                // Get token
+                const token = getStoredToken();
+                if (!token) {
+                    showLogin();
                     return;
                 }
 
-                currentUser = {
-                    username: username.trim(),
-                    fullName: username.trim()
-                };
+                // Get user info
+                const userInfo = await getUserInfo(token);
+                if (!userInfo) {
+                    localStorage.removeItem('arcgis_token');
+                    localStorage.removeItem('arcgis_token_expires');
+                    showError('Authentication failed. Please sign in again.');
+                    showLogin();
+                    return;
+                }
 
-                await loadUserProfile();
+                currentUser = userInfo;
+                await loadUserProfile(token);
                 showContent();
             } catch (error) {
                 console.error('Initialization error:', error);
@@ -484,105 +547,10 @@
             }
         }
 
-        // Extract username from Hub page (looks for "This is your username:" pattern)
-        function extractUsernameFromHub() {
+        // Get user info using token
+        async function getUserInfo(token) {
             try {
-                // Check all text nodes in parent and current document
-                const searchDocs = [document];
-                
-                // Try to access parent window if in iframe
-                if (window.parent !== window) {
-                    try {
-                        // Check if we can access parent - this may fail due to CORS
-                        if (window.parent.document) {
-                            searchDocs.push(window.parent.document);
-                        }
-                    } catch (e) {
-                        console.log('Cannot access parent document (expected in cross-origin iframe)');
-                    }
-                }
-
-                for (const doc of searchDocs) {
-                    const bodyText = doc.body.innerText;
-                    
-                    // Look for "This is your username:" followed by the username
-                    const usernameMatch = bodyText.match(/This is your username:\s*\n\s*([^\n\r]+)/);
-                    if (usernameMatch && usernameMatch[1]) {
-                        return usernameMatch[1].trim();
-                    }
-
-                    // Alternative: look for username in input fields
-                    const inputs = doc.querySelectorAll('input[type="text"], input[readonly]');
-                    for (const input of inputs) {
-                        const label = input.previousElementSibling || input.parentElement.querySelector('label');
-                        if (label && label.textContent.includes('username')) {
-                            if (input.value) {
-                                return input.value.trim();
-                            }
-                        }
-                    }
-
-                    // Look for any text that looks like a username (format: word_word_word)
-                    const usernamePattern = /([a-zA-Z0-9_]+_[a-zA-Z0-9_]+)/g;
-                    const potentialUsernames = bodyText.match(usernamePattern);
-                    if (potentialUsernames) {
-                        // Return the first one that looks like our pattern
-                        for (const potential of potentialUsernames) {
-                            if (potential.includes('_')) {
-                                return potential;
-                            }
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('Error extracting username from Hub:', error);
-            }
-            return null;
-        }
-
-        // Try to extract username from parent window
-        function extractUsernameFromParent() {
-            try {
-                if (window.parent === window) return null;
-
-                // Check for common global variables that might contain user info
-                const parentWindow = window.parent;
-                
-                if (parentWindow.currentUser) {
-                    return parentWindow.currentUser.username;
-                }
-                if (parentWindow.user) {
-                    return parentWindow.user.username || parentWindow.user.name;
-                }
-                if (parentWindow.hubUser) {
-                    return parentWindow.hubUser.username;
-                }
-            } catch (error) {
-                console.log('Cannot access parent window variables (expected)');
-            }
-            return null;
-        }
-
-        // Get URL parameter
-        function getUrlParameter(name) {
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get(name);
-        }
-
-        // Get current user from Portal (fallback, may fail in iframe)
-        async function getUserInfo() {
-            try {
-                const response = await fetch(`${CONFIG.portalUrl}/sharing/rest/community/self?f=json`, {
-                    credentials: 'include',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-                
-                if (!response.ok) {
-                    return null;
-                }
-
+                const response = await fetch(`${CONFIG.portalUrl}/sharing/rest/community/self?f=json&token=${token}`);
                 const data = await response.json();
 
                 if (data.error) {
@@ -595,38 +563,40 @@
                     fullName: data.fullName || data.username
                 };
             } catch (error) {
-                console.error('Error getting user info from Portal:', error);
+                console.error('Error getting user info:', error);
                 return null;
             }
         }
 
-        // Load user's feature from the feature service
-        async function loadUserProfile() {
+        // Load user's feature from feature service
+        async function loadUserProfile(token) {
             try {
-                // Query for the feature where the username matches the current user
                 const whereClause = `username = '${currentUser.username}'`;
-                const queryUrl = `${CONFIG.featureServiceUrl}/query?where=${encodeURIComponent(whereClause)}&f=json&outFields=*`;
+                const queryUrl = `${CONFIG.featureServiceUrl}/query?where=${encodeURIComponent(whereClause)}&f=json&outFields=*&token=${token}`;
 
                 const response = await fetch(queryUrl);
                 const data = await response.json();
 
+                if (data.error) {
+                    throw new Error(data.error.message || 'Query failed');
+                }
+
                 if (!data.features || data.features.length === 0) {
-                    showError('Your profile not found in the system. Please contact support.');
-                    return;
+                    throw new Error('Your profile not found in the system.');
                 }
 
                 currentFeature = data.features[0];
                 updateProfileDisplay();
-                await loadAttachments();
+                await loadAttachments(token);
             } catch (error) {
                 throw new Error('Failed to load your profile: ' + error.message);
             }
         }
 
-        // Load attachments for the current feature
-        async function loadAttachments() {
+        // Load attachments
+        async function loadAttachments(token) {
             try {
-                const attachmentsUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/attachments/query?f=json`;
+                const attachmentsUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/attachments/query?f=json&token=${token}`;
                 const response = await fetch(attachmentsUrl);
                 const data = await response.json();
 
@@ -639,7 +609,7 @@
             }
         }
 
-        // Update profile display with member info
+        // Update profile display
         function updateProfileDisplay() {
             const memberName = currentFeature.attributes.First_Name || 'Member';
             const memberOrg = currentFeature.attributes.Organization_Name || 'SJCA';
@@ -651,7 +621,7 @@
             document.getElementById('profileInfo').style.display = 'flex';
         }
 
-        // Render the gallery
+        // Render gallery
         function renderGallery() {
             const container = document.getElementById('galleryContainer');
 
@@ -667,28 +637,27 @@
 
             let html = '<div class="image-grid">';
 
-            // Render existing attachments
+            // Existing attachments
             attachmentsData.forEach((attachment, index) => {
-                const thumbnailUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/attachments/${attachment.id}`;
+                const thumbnailUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/attachments/${attachment.id}?token=${getStoredToken()}`;
                 html += `
-                    <div class="image-card" draggable="true" data-type="existing" data-id="${attachment.id}" data-index="${index}">
+                    <div class="image-card" data-type="existing" data-id="${attachment.id}">
                         <img src="${thumbnailUrl}" alt="Photo ${index + 1}">
                         <div class="image-actions">
-                            <button class="action-btn" onclick="moveUp('${attachment.id}')" title="Move up"><i class="fas fa-arrow-up"></i></button>
-                            <button class="action-btn" onclick="deleteAttachment('${attachment.id}')" title="Delete"><i class="fas fa-trash"></i></button>
+                            <button class="action-btn" onclick="deleteAttachment('${attachment.id}')" title="Delete"><span>🗑</span></button>
                         </div>
                     </div>
                 `;
             });
 
-            // Render new attachments to upload
+            // New attachments
             newAttachmentsToUpload.forEach((file, index) => {
                 const previewUrl = URL.createObjectURL(file);
                 html += `
-                    <div class="image-card" data-type="new" data-index="${index}">
+                    <div class="image-card" data-type="new">
                         <img src="${previewUrl}" alt="New photo">
                         <div class="image-actions">
-                            <button class="action-btn" onclick="removeNewAttachment(${index})" title="Remove"><i class="fas fa-trash"></i></button>
+                            <button class="action-btn" onclick="removeNewAttachment(${index})" title="Remove"><span>🗑</span></button>
                         </div>
                     </div>
                 `;
@@ -697,19 +666,8 @@
             html += '</div>';
             container.innerHTML = html;
 
-            // Update save button state
             const hasChanges = deletedAttachmentIds.length > 0 || newAttachmentsToUpload.length > 0;
             document.getElementById('saveBtn').disabled = !hasChanges;
-        }
-
-        // Move attachment up in order
-        function moveUp(attachmentId) {
-            const index = attachmentsData.findIndex(a => a.id == attachmentId);
-            if (index > 0) {
-                [attachmentsData[index], attachmentsData[index - 1]] = [attachmentsData[index - 1], attachmentsData[index]];
-                renderGallery();
-                document.getElementById('saveBtn').disabled = false;
-            }
         }
 
         // Delete attachment
@@ -721,17 +679,17 @@
             }
         }
 
-        // Remove new attachment before upload
+        // Remove new attachment
         function removeNewAttachment(index) {
             newAttachmentsToUpload.splice(index, 1);
             renderGallery();
         }
 
-        // Handle file selection
+        // File input
         document.getElementById('fileInput').addEventListener('change', (e) => {
             const files = Array.from(e.target.files);
             files.forEach(file => {
-                if (file.size <= 5 * 1024 * 1024) { // 5MB limit
+                if (file.size <= 5 * 1024 * 1024) {
                     newAttachmentsToUpload.push(file);
                 } else {
                     showMessage(`File ${file.name} is too large (max 5MB)`, 'error');
@@ -741,7 +699,7 @@
             document.getElementById('fileInput').value = '';
         });
 
-        // Upload zone drag and drop
+        // Upload zone
         const uploadZone = document.getElementById('uploadZone');
         uploadZone.addEventListener('click', () => document.getElementById('fileInput').click());
         uploadZone.addEventListener('dragover', (e) => {
@@ -752,15 +710,16 @@
         uploadZone.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadZone.classList.remove('dragover');
-            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
             const dataTransfer = new DataTransfer();
             files.forEach(f => dataTransfer.items.add(f));
             document.getElementById('fileInput').files = dataTransfer.files;
             document.getElementById('fileInput').dispatchEvent(new Event('change'));
         });
 
-        // Save changes
+        // Save
         document.getElementById('saveBtn').addEventListener('click', async () => {
+            const token = getStoredToken();
             const saveBtn = document.getElementById('saveBtn');
             saveBtn.disabled = true;
             showMessage('Saving your changes...', 'loading');
@@ -769,87 +728,94 @@
                 // Delete attachments
                 if (deletedAttachmentIds.length > 0) {
                     for (const id of deletedAttachmentIds) {
-                        await deleteAttachmentFromService(id);
+                        await deleteAttachmentFromService(id, token);
                     }
                 }
 
-                // Upload new attachments
+                // Upload new
                 if (newAttachmentsToUpload.length > 0) {
                     for (const file of newAttachmentsToUpload) {
-                        await uploadAttachment(file);
+                        await uploadAttachment(file, token);
                     }
                 }
 
-                // Reset state
                 deletedAttachmentIds = [];
                 newAttachmentsToUpload = [];
-                await loadAttachments();
+                await loadAttachments(token);
                 showMessage('Changes saved successfully!', 'success');
             } catch (error) {
-                showMessage('Error saving changes: ' + error.message, 'error');
+                showMessage('Error: ' + error.message, 'error');
                 saveBtn.disabled = false;
             }
         });
 
-        // Delete attachment from service
-        async function deleteAttachmentFromService(attachmentId) {
+        // Delete from service
+        async function deleteAttachmentFromService(attachmentId, token) {
             const deleteUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/attachments/${attachmentId}/delete`;
-            const response = await fetch(deleteUrl, {
-                method: 'POST',
-                body: new FormData()
-            });
+            const formData = new FormData();
+            formData.append('f', 'json');
+            formData.append('token', token);
+
+            const response = await fetch(deleteUrl, { method: 'POST', body: formData });
             const result = await response.json();
             if (result.error) throw new Error(result.error.message);
         }
 
-        // Upload attachment
-        async function uploadAttachment(file) {
+        // Upload
+        async function uploadAttachment(file, token) {
             const formData = new FormData();
             formData.append('attachment', file);
             formData.append('f', 'json');
+            formData.append('token', token);
 
             const uploadUrl = `${CONFIG.featureServiceUrl}/${currentFeature.attributes.OBJECTID}/addAttachment`;
-            const response = await fetch(uploadUrl, {
-                method: 'POST',
-                body: formData
-            });
+            const response = await fetch(uploadUrl, { method: 'POST', body: formData });
             const result = await response.json();
             if (result.error) throw new Error(result.error.message);
         }
 
-        // Cancel button
+        // Cancel
         document.getElementById('cancelBtn').addEventListener('click', () => {
             if (confirm('Discard all changes?')) {
                 deletedAttachmentIds = [];
                 newAttachmentsToUpload = [];
-                loadAttachments();
+                const token = getStoredToken();
+                loadAttachments(token);
                 showMessage('Changes discarded', 'success');
             }
         });
 
+        // Login button
+        document.getElementById('loginBtn').addEventListener('click', initiateOAuthLogin);
+
         // UI helpers
+        function showLogin() {
+            document.getElementById('loginState').style.display = 'block';
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('contentState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+        }
+
+        function showLoading() {
+            document.getElementById('loginState').style.display = 'none';
+            document.getElementById('loadingState').style.display = 'block';
+            document.getElementById('contentState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+        }
+
         function showContent() {
+            document.getElementById('loginState').style.display = 'none';
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('contentState').style.display = 'block';
             document.getElementById('errorState').style.display = 'none';
         }
 
         function showError(message) {
+            document.getElementById('loginState').style.display = 'none';
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('contentState').style.display = 'none';
             document.getElementById('errorState').style.display = 'block';
             document.getElementById('errorMessage').textContent = message;
-
-            // Show debug info
-            const debugInfo = [
-                `URL: ${window.location.href}`,
-                `In iframe: ${window.parent !== window}`,
-                `Portal URL: ${CONFIG.portalUrl}`,
-                `Feature Service: ${CONFIG.featureServiceUrl}`,
-                `User Agent: ${navigator.userAgent.substring(0, 50)}...`
-            ];
-            document.getElementById('debugInfo').style.display = 'block';
-            document.getElementById('debugText').textContent = debugInfo.join('\n');
         }
 
         function showMessage(message, type = 'info') {
@@ -861,8 +827,16 @@
             }
         }
 
-        // Initialize when DOM is ready
-        document.addEventListener('DOMContentLoaded', init);
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            checkOAuthCallback();
+            const token = getStoredToken();
+            if (token) {
+                init();
+            } else {
+                showLogin();
+            }
+        });
     </script>
 </body>
 </html>
