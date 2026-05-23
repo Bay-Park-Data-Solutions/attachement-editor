@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SJCA Member Profile - Manage Photos</title>
     
-    <!-- ArcGIS JS API -->
-    <link rel="stylesheet" href="https://js.arcgis.com/4.28/esri/themes/light/main.css">
-    <script src="https://js.arcgis.com/4.28/"></script>
-    
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
@@ -109,7 +105,9 @@
                 <div class="error">
                     <strong>Unable to load your profile</strong>
                     <p id="errorMessage" style="margin-top: 8px;"></p>
-                    <button class="login-btn" id="loginBtn">Sign In</button>
+                    <a href="https://sjca-hub.maps.arcgis.com/home/signin.html?redirect=https://bay-park-data-solutions.github.io/attachement-editor/" target="_blank">
+                        <button class="login-btn">Sign In with Portal</button>
+                    </a>
                 </div>
             </div>
         </div>
@@ -118,290 +116,236 @@
     <input type="file" id="fileInput" accept="image/*" multiple>
 
     <script>
-        require(['esri/identity/OAuthInfo', 'esri/identity/IdentityManager'], 
-            function(OAuthInfo, esriId) {
-            
-            // ================================================================
-            // CONFIGURATION
-            // ================================================================
-            const PORTAL_URL = 'https://sjca-hub.maps.arcgis.com';
-            const FEATURE_SERVICE_URL = 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0';
-            const OAUTH_APP_ID = '8otS7Td5TdxbVjOG';
-            
-            // ================================================================
-            // SETUP OAUTH
-            // ================================================================
-            const oAuthInfo = new OAuthInfo({
-                appId: OAUTH_APP_ID,
-                portalUrl: PORTAL_URL,
-                popup: true,
-                popupWindowFeatures: 'height=400,width=600'
-            });
-            
-            esriId.registerOAuthInfos([oAuthInfo]);
-            
-            // Handle token in URL (from OAuth redirect)
-            esriId.checkSignInStatus(PORTAL_URL + '/sharing/rest').then(
-                function() {
-                    console.log('✓ Already authenticated');
-                    init();
-                },
-                function() {
-                    console.log('Not authenticated');
+        // Configuration
+        const PORTAL_URL = 'https://sjca-hub.maps.arcgis.com';
+        const FEATURE_SERVICE_URL = 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0';
+        
+        let currentUser = null;
+        let currentFeature = null;
+        let attachmentsData = [];
+        let newAttachmentsToUpload = [];
+        let deletedAttachmentIds = [];
+        
+        function getTokenFromUrl() {
+            const hash = window.location.hash;
+            const match = hash.match(/access_token=([^&]+)/);
+            if (match) {
+                const token = match[1];
+                localStorage.setItem('arcgis_token', token);
+                window.location.hash = '';
+                return token;
+            }
+            return localStorage.getItem('arcgis_token');
+        }
+        
+        async function init() {
+            try {
+                showLoading();
+                
+                const token = getTokenFromUrl();
+                if (!token) {
                     showError('Please sign in to manage your photos');
-                    document.getElementById('loginBtn').onclick = doLogin;
-                }
-            );
-            
-            async function doLogin() {
-                try {
-                    const credential = await esriId.getCredential(PORTAL_URL + '/sharing/rest');
-                    console.log('✓ Got credential:', credential.userId);
-                    init();
-                } catch (error) {
-                    console.error('Login failed:', error);
-                    showError('Login failed: ' + error.message);
-                }
-            }
-            
-            // ================================================================
-            // STATE
-            // ================================================================
-            let currentUser = null;
-            let currentFeature = null;
-            let attachmentsData = [];
-            let newAttachmentsToUpload = [];
-            let deletedAttachmentIds = [];
-            
-            // ================================================================
-            // INIT
-            // ================================================================
-            async function init() {
-                try {
-                    showLoading();
-                    
-                    // Get signed-in user
-                    const credential = esriId.findCredential(PORTAL_URL + '/sharing/rest');
-                    if (!credential) {
-                        throw new Error('No credential found');
-                    }
-                    
-                    currentUser = { username: credential.userId };
-                    console.log('✓ Current user:', currentUser.username);
-                    
-                    await loadUserProfile();
-                    showContent();
-                } catch (error) {
-                    console.error('Init error:', error);
-                    showError('Error: ' + error.message);
-                }
-            }
-            
-            // ================================================================
-            // LOAD USER PROFILE
-            // ================================================================
-            async function loadUserProfile() {
-                try {
-                    const whereClause = `username = '${currentUser.username}'`;
-                    const url = FEATURE_SERVICE_URL + '/query?where=' + encodeURIComponent(whereClause) + '&f=json&outFields=*';
-                    
-                    const response = await fetch(url, {
-                        credentials: 'include'
-                    });
-                    const data = await response.json();
-                    
-                    console.log('Profile response:', data);
-                    
-                    if (data.error) {
-                        throw new Error('Feature Service error: ' + data.error.message);
-                    }
-                    
-                    if (!data.features || data.features.length === 0) {
-                        throw new Error('Profile not found for user: ' + currentUser.username);
-                    }
-                    
-                    currentFeature = data.features[0];
-                    updateProfileDisplay();
-                    await loadAttachments();
-                } catch (error) {
-                    throw new Error('Failed to load profile: ' + error.message);
-                }
-            }
-            
-            // ================================================================
-            // LOAD ATTACHMENTS
-            // ================================================================
-            async function loadAttachments() {
-                try {
-                    const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/query?f=json';
-                    const response = await fetch(url, {
-                        credentials: 'include'
-                    });
-                    const data = await response.json();
-                    
-                    attachmentsData = data.attachmentInfos || [];
-                    renderGallery();
-                } catch (error) {
-                    console.error('Attachments error:', error);
-                    attachmentsData = [];
-                    renderGallery();
-                }
-            }
-            
-            // ================================================================
-            // UPDATE PROFILE DISPLAY
-            // ================================================================
-            function updateProfileDisplay() {
-                const name = currentFeature.attributes.Full_Name || 'Member';
-                const org = currentFeature.attributes.Organization_Name || 'SJCA';
-                const initials = (name.charAt(0) || 'M') + (name.split(' ')[1]?.charAt(0) || 'M');
-                document.getElementById('memberName').textContent = name;
-                document.getElementById('memberOrg').textContent = org;
-                document.getElementById('userAvatar').textContent = initials.toUpperCase();
-                document.getElementById('profileInfo').style.display = 'flex';
-            }
-            
-            // ================================================================
-            // RENDER GALLERY
-            // ================================================================
-            function renderGallery() {
-                const container = document.getElementById('galleryContainer');
-                if (attachmentsData.length === 0 && newAttachmentsToUpload.length === 0) {
-                    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📷</div><p>No images yet!</p></div>';
                     return;
                 }
-                let html = '<div class="image-grid">';
-                attachmentsData.forEach((a) => {
-                    const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/' + a.id;
-                    html += `<div class="image-card"><img src="${url}" alt="Photo"><div class="image-actions"><button class="action-btn" onclick="window.deleteAttachmentFn('${a.id}')">🗑</button></div></div>`;
-                });
-                newAttachmentsToUpload.forEach((f, i) => {
-                    html += `<div class="image-card"><img src="${URL.createObjectURL(f)}" alt="New"><div class="image-actions"><button class="action-btn" onclick="window.removeNewAttachmentFn(${i})">🗑</button></div></div>`;
-                });
-                html += '</div>';
-                container.innerHTML = html;
-                document.getElementById('saveBtn').disabled = deletedAttachmentIds.length === 0 && newAttachmentsToUpload.length === 0;
-            }
-            
-            // ================================================================
-            // DELETE ATTACHMENT
-            // ================================================================
-            window.deleteAttachmentFn = function(id) {
-                if (confirm('Delete this image?')) {
-                    attachmentsData = attachmentsData.filter(a => a.id != id);
-                    deletedAttachmentIds.push(id);
-                    renderGallery();
+                
+                const userResponse = await fetch(PORTAL_URL + '/sharing/rest/community/self?f=json&token=' + token);
+                const userData = await userResponse.json();
+                
+                if (userData.error || !userData.username) {
+                    localStorage.removeItem('arcgis_token');
+                    showError('Session expired. Please sign in again.');
+                    return;
                 }
-            };
-            
-            window.removeNewAttachmentFn = function(i) {
-                newAttachmentsToUpload.splice(i, 1);
+                
+                currentUser = { username: userData.username };
+                console.log('✓ Logged in as:', currentUser.username);
+                
+                await loadUserProfile(token);
+                showContent();
+            } catch (error) {
+                console.error('Init error:', error);
+                showError('Error: ' + error.message);
+            }
+        }
+        
+        async function loadUserProfile(token) {
+            try {
+                const whereClause = `username = '${currentUser.username}'`;
+                const url = FEATURE_SERVICE_URL + '/query?where=' + encodeURIComponent(whereClause) + '&f=json&outFields=*&token=' + token;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error('Feature Service error: ' + data.error.message);
+                }
+                
+                if (!data.features || data.features.length === 0) {
+                    throw new Error('Profile not found for user: ' + currentUser.username);
+                }
+                
+                currentFeature = data.features[0];
+                updateProfileDisplay();
+                await loadAttachments(token);
+            } catch (error) {
+                throw new Error('Failed to load profile: ' + error.message);
+            }
+        }
+        
+        async function loadAttachments(token) {
+            try {
+                const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/query?f=json&token=' + token;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                attachmentsData = data.attachmentInfos || [];
                 renderGallery();
-            };
-            
-            // ================================================================
-            // FILE INPUT
-            // ================================================================
-            document.getElementById('fileInput').addEventListener('change', (e) => {
-                Array.from(e.target.files).forEach(f => {
-                    if (f.size <= 5 * 1024 * 1024) newAttachmentsToUpload.push(f);
-                });
+            } catch (error) {
+                console.error('Attachments error:', error);
+                attachmentsData = [];
                 renderGallery();
-                document.getElementById('fileInput').value = '';
-            });
-            
-            const uploadZone = document.getElementById('uploadZone');
-            uploadZone.addEventListener('click', () => document.getElementById('fileInput').click());
-            uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-            uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-            uploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadZone.classList.remove('dragover');
-                const dt = new DataTransfer();
-                Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')).forEach(f => dt.items.add(f));
-                document.getElementById('fileInput').files = dt.files;
-                document.getElementById('fileInput').dispatchEvent(new Event('change'));
-            });
-            
-            // ================================================================
-            // SAVE CHANGES
-            // ================================================================
-            document.getElementById('saveBtn').addEventListener('click', async () => {
-                try {
-                    document.getElementById('saveBtn').disabled = true;
-                    const saveBtn = document.getElementById('saveBtn');
-                    saveBtn.textContent = 'Saving...';
-                    
-                    // Delete removed attachments
-                    for (const attachmentId of deletedAttachmentIds) {
-                        const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/deleteAttachments';
-                        await fetch(url, {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                            body: 'attachmentIds=' + attachmentId + '&f=json'
-                        });
-                    }
-                    
-                    // Add new attachments
-                    for (const file of newAttachmentsToUpload) {
-                        const formData = new FormData();
-                        formData.append('attachment', file);
-                        formData.append('f', 'json');
-                        
-                        const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/addAttachment';
-                        await fetch(url, {
-                            method: 'POST',
-                            credentials: 'include',
-                            body: formData
-                        });
-                    }
-                    
-                    deletedAttachmentIds = [];
-                    newAttachmentsToUpload = [];
-                    
-                    await loadAttachments();
-                    saveBtn.textContent = 'Save';
-                    alert('✓ Changes saved!');
-                } catch (error) {
-                    console.error('Save error:', error);
-                    alert('✗ Error saving: ' + error.message);
-                    document.getElementById('saveBtn').disabled = false;
-                    document.getElementById('saveBtn').textContent = 'Save';
-                }
-            });
-            
-            document.getElementById('cancelBtn').addEventListener('click', () => {
-                if (confirm('Discard changes?')) {
-                    deletedAttachmentIds = [];
-                    newAttachmentsToUpload = [];
-                    renderGallery();
-                }
-            });
-            
-            // ================================================================
-            // UI HELPERS
-            // ================================================================
-            function showLoading() {
-                document.getElementById('loadingState').style.display = 'block';
-                document.getElementById('contentState').style.display = 'none';
-                document.getElementById('errorState').style.display = 'none';
             }
-            
-            function showContent() {
-                document.getElementById('loadingState').style.display = 'none';
-                document.getElementById('contentState').style.display = 'block';
-                document.getElementById('errorState').style.display = 'none';
+        }
+        
+        function updateProfileDisplay() {
+            const name = currentFeature.attributes.Full_Name || 'Member';
+            const org = currentFeature.attributes.Organization_Name || 'SJCA';
+            const initials = (name.charAt(0) || 'M') + (name.split(' ')[1]?.charAt(0) || 'M');
+            document.getElementById('memberName').textContent = name;
+            document.getElementById('memberOrg').textContent = org;
+            document.getElementById('userAvatar').textContent = initials.toUpperCase();
+            document.getElementById('profileInfo').style.display = 'flex';
+        }
+        
+        function renderGallery() {
+            const container = document.getElementById('galleryContainer');
+            if (attachmentsData.length === 0 && newAttachmentsToUpload.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📷</div><p>No images yet!</p></div>';
+                return;
             }
-            
-            function showError(msg) {
-                document.getElementById('loadingState').style.display = 'none';
-                document.getElementById('contentState').style.display = 'none';
-                document.getElementById('errorState').style.display = 'block';
-                document.getElementById('errorMessage').textContent = msg;
+            let html = '<div class="image-grid">';
+            attachmentsData.forEach((a) => {
+                const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/' + a.id;
+                html += `<div class="image-card"><img src="${url}" alt="Photo"><div class="image-actions"><button class="action-btn" onclick="window.deleteAttachmentFn('${a.id}')">🗑</button></div></div>`;
+            });
+            newAttachmentsToUpload.forEach((f, i) => {
+                html += `<div class="image-card"><img src="${URL.createObjectURL(f)}" alt="New"><div class="image-actions"><button class="action-btn" onclick="window.removeNewAttachmentFn(${i})">🗑</button></div></div>`;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+            document.getElementById('saveBtn').disabled = deletedAttachmentIds.length === 0 && newAttachmentsToUpload.length === 0;
+        }
+        
+        window.deleteAttachmentFn = function(id) {
+            if (confirm('Delete this image?')) {
+                attachmentsData = attachmentsData.filter(a => a.id != id);
+                deletedAttachmentIds.push(id);
+                renderGallery();
+            }
+        };
+        
+        window.removeNewAttachmentFn = function(i) {
+            newAttachmentsToUpload.splice(i, 1);
+            renderGallery();
+        };
+        
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            Array.from(e.target.files).forEach(f => {
+                if (f.size <= 5 * 1024 * 1024) newAttachmentsToUpload.push(f);
+            });
+            renderGallery();
+            document.getElementById('fileInput').value = '';
+        });
+        
+        const uploadZone = document.getElementById('uploadZone');
+        uploadZone.addEventListener('click', () => document.getElementById('fileInput').click());
+        uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const dt = new DataTransfer();
+            Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')).forEach(f => dt.items.add(f));
+            document.getElementById('fileInput').files = dt.files;
+            document.getElementById('fileInput').dispatchEvent(new Event('change'));
+        });
+        
+        document.getElementById('saveBtn').addEventListener('click', async () => {
+            try {
+                const token = localStorage.getItem('arcgis_token');
+                if (!token) {
+                    alert('Session expired. Please sign in again.');
+                    return;
+                }
+                
+                document.getElementById('saveBtn').disabled = true;
+                const saveBtn = document.getElementById('saveBtn');
+                saveBtn.textContent = 'Saving...';
+                
+                for (const attachmentId of deletedAttachmentIds) {
+                    const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/deleteAttachments';
+                    await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'attachmentIds=' + attachmentId + '&token=' + token + '&f=json'
+                    });
+                }
+                
+                for (const file of newAttachmentsToUpload) {
+                    const formData = new FormData();
+                    formData.append('attachment', file);
+                    formData.append('token', token);
+                    formData.append('f', 'json');
+                    
+                    const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/addAttachment';
+                    await fetch(url, {
+                        method: 'POST',
+                        body: formData
+                    });
+                }
+                
+                deletedAttachmentIds = [];
+                newAttachmentsToUpload = [];
+                
+                await loadAttachments(token);
+                saveBtn.textContent = 'Save';
+                alert('✓ Changes saved!');
+            } catch (error) {
+                console.error('Save error:', error);
+                alert('✗ Error saving: ' + error.message);
+                document.getElementById('saveBtn').disabled = false;
+                document.getElementById('saveBtn').textContent = 'Save';
             }
         });
-    </script>
+        
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            if (confirm('Discard changes?')) {
+                deletedAttachmentIds = [];
+                newAttachmentsToUpload = [];
+                renderGallery();
+            }
+        });
+        
+        function showLoading() {
+            document.getElementById('loadingState').style.display = 'block';
+            document.getElementById('contentState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'none';
+        }
+        
+        function showContent() {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('contentState').style.display = 'block';
+            document.getElementById('errorState').style.display = 'none';
+        }
+        
+        function showError(msg) {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('contentState').style.display = 'none';
+            document.getElementById('errorState').style.display = 'block';
+            document.getElementById('errorMessage').textContent = msg;
+        }
+        
+        init();
     </script>
 </body>
 </html>
