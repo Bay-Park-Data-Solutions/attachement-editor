@@ -485,11 +485,25 @@
 
         // Check if we're coming back from OAuth
         function checkOAuthCallback() {
-            const params = new URLSearchParams(window.location.hash.substring(1));
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
             const token = params.get('access_token');
             const expiresIn = params.get('expires_in');
+            const error = params.get('error');
+            
+            console.log('OAuth Callback Check:');
+            console.log('  Hash:', hash);
+            console.log('  Token:', token ? 'Received' : 'Not found');
+            console.log('  Error:', error || 'None');
+            
+            if (error) {
+                console.error('OAuth Error:', error);
+                showError(`OAuth error: ${error}`);
+                return;
+            }
             
             if (token) {
+                console.log('Token saved to localStorage');
                 localStorage.setItem('arcgis_token', token);
                 localStorage.setItem('arcgis_token_expires', Date.now() + (expiresIn * 1000));
                 // Clean up URL

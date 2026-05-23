@@ -1,20 +1,24 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>OAuth Callback</title>
+    <title>Processing Login...</title>
 </head>
 <body>
-    <p>Processing login...</p>
+    <p>Redirecting you back to the app...</p>
     <script>
-        // The OAuth redirect brings the token in the URL hash
-        // We just need to redirect back to the main app with the token intact
+        // Get the full URL including the hash with the access token
+        const fullUrl = window.location.href;
+        
+        // Extract just the hash part (everything after #)
         const hash = window.location.hash;
+        
+        // The OAuth response comes in the hash, redirect back to index with it
         if (hash) {
-            // Redirect to index.html with the token hash
-            window.location = './index.html' + hash;
+            // Redirect to the root with the token hash preserved
+            window.location.href = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1) + hash;
         } else {
-            // No token received
-            window.location = './index.html';
+            // No token, redirect to main page
+            window.location.href = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
         }
     </script>
 </body>
