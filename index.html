@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SJCA Member Profile - Manage Photos</title>
     
+    <!-- ArcGIS SDK CSS -->
+    <link rel="stylesheet" href="https://js.arcgis.com/4.28/esri/themes/light/main.css">
+    <script type="module" src="https://js.arcgis.com/4.28/"></script>
+    
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
@@ -105,9 +109,7 @@
                 <div class="error">
                     <strong>Unable to load your profile</strong>
                     <p id="errorMessage" style="margin-top: 8px;"></p>
-                    <a href="https://sjca-hub.maps.arcgis.com/home/signin.html?redirect=https://bay-park-data-solutions.github.io/attachement-editor/" target="_blank">
-                        <button class="login-btn">Sign In with Portal</button>
-                    </a>
+                    <button class="login-btn" id="loginBtn">Sign In</button>
                 </div>
             </div>
         </div>
@@ -115,89 +117,149 @@
 
     <input type="file" id="fileInput" accept="image/*" multiple>
 
-    <script>
-        // Configuration
+    <script type="module">
+        const [OAuthInfo, IdentityManager, Portal, FeatureLayer] = await $arcgis.import([
+            "@arcgis/core/identity/OAuthInfo.js",
+            "@arcgis/core/identity/IdentityManager.js",
+            "@arcgis/core/portal/Portal.js",
+            "@arcgis/core/layers/FeatureLayer.js"
+        ]);
+
+        // ================================================================
+        // CONFIGURATION
+        // ================================================================
         const PORTAL_URL = 'https://sjca-hub.maps.arcgis.com';
         const FEATURE_SERVICE_URL = 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0';
-        
+        const OAUTH_APP_ID = '8otS7Td5TdxbVjOG';
+
+        // ================================================================
+        // STATE
+        // ================================================================
         let currentUser = null;
         let currentFeature = null;
         let attachmentsData = [];
         let newAttachmentsToUpload = [];
         let deletedAttachmentIds = [];
-        
-        function getTokenFromUrl() {
-            const hash = window.location.hash;
-            const match = hash.match(/access_token=([^&]+)/);
-            if (match) {
-                const token = match[1];
-                localStorage.setItem('arcgis_token', token);
-                window.location.hash = '';
-                return token;
-            }
-            return localStorage.getItem('arcgis_token');
-        }
-        
+        let identityManager = IdentityManager;
+
+        // ================================================================
+        // SETUP OAUTH
+        // ================================================================
+        const oAuthInfo = new OAuthInfo({
+            appId: OAUTH_APP_ID,
+            portalUrl: PORTAL_URL,
+            popup: true
+        });
+
+        identityManager.registerOAuthInfos([oAuthInfo]);
+
+        // ================================================================
+        // INIT
+        // ================================================================
         async function init() {
             try {
                 showLoading();
+
+                // Check if already signed in
+                await identityManager.checkSignInStatus(PORTAL_URL + "/sharing");
                 
-                const token = getTokenFromUrl();
-                if (!token) {
-                    showError('Please sign in to manage your photos');
-                    return;
-                }
-                
-                const userResponse = await fetch(PORTAL_URL + '/sharing/rest/community/self?f=json&token=' + token);
-                const userData = await userResponse.json();
-                
-                if (userData.error || !userData.username) {
-                    localStorage.removeItem('arcgis_token');
-                    showError('Session expired. Please sign in again.');
-                    return;
-                }
-                
-                currentUser = { username: userData.username };
-                console.log('✓ Logged in as:', currentUser.username);
-                
-                await loadUserProfile(token);
+                // If we get here, user is signed in
+                await loadApp();
                 showContent();
             } catch (error) {
-                console.error('Init error:', error);
-                showError('Error: ' + error.message);
+                console.log('Not signed in:', error);
+                showError('Please sign in to manage your photos');
             }
         }
-        
-        async function loadUserProfile(token) {
+
+        // ================================================================
+        // SIGN IN
+        // ================================================================
+        document.getElementById('loginBtn').addEventListener('click', async () => {
+            try {
+                showLoading();
+                
+                // Get credential (this will show login popup)
+                await identityManager.getCredential(PORTAL_URL + "/sharing");
+                
+                // If successful, load the app
+                await loadApp();
+                showContent();
+            } catch (error) {
+                console.error('Sign in error:', error);
+                showError('Sign in failed: ' + error.message);
+            }
+        });
+
+        // ================================================================
+        // LOAD APP
+        // ================================================================
+        async function loadApp() {
+            try {
+                // Get credential
+                const credential = identityManager.findCredential(PORTAL_URL + "/sharing");
+                if (!credential) {
+                    throw new Error('No credential found');
+                }
+
+                // Get user info
+                const portal = new Portal({
+                    url: PORTAL_URL,
+                    authMode: "immediate"
+                });
+                await portal.load();
+
+                currentUser = { username: portal.user.username };
+                console.log('✓ Logged in as:', currentUser.username);
+
+                // Load profile
+                await loadUserProfile();
+            } catch (error) {
+                throw new Error('Failed to load app: ' + error.message);
+            }
+        }
+
+        // ================================================================
+        // LOAD USER PROFILE
+        // ================================================================
+        async function loadUserProfile() {
             try {
                 const whereClause = `username = '${currentUser.username}'`;
-                const url = FEATURE_SERVICE_URL + '/query?where=' + encodeURIComponent(whereClause) + '&f=json&outFields=*&token=' + token;
                 
-                const response = await fetch(url);
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error('Feature Service error: ' + data.error.message);
-                }
-                
-                if (!data.features || data.features.length === 0) {
+                const featureLayer = new FeatureLayer({
+                    url: FEATURE_SERVICE_URL
+                });
+
+                const result = await featureLayer.queryFeatures({
+                    where: whereClause,
+                    outFields: "*",
+                    returnGeometry: false
+                });
+
+                if (!result.features || result.features.length === 0) {
                     throw new Error('Profile not found for user: ' + currentUser.username);
                 }
-                
-                currentFeature = data.features[0];
+
+                currentFeature = result.features[0];
                 updateProfileDisplay();
-                await loadAttachments(token);
+                await loadAttachments();
             } catch (error) {
                 throw new Error('Failed to load profile: ' + error.message);
             }
         }
-        
-        async function loadAttachments(token) {
+
+        // ================================================================
+        // LOAD ATTACHMENTS
+        // ================================================================
+        async function loadAttachments() {
             try {
-                const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/query?f=json&token=' + token;
+                const credential = identityManager.findCredential(PORTAL_URL + "/sharing");
+                const token = credential ? credential.token : null;
+
+                const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/query?f=json' + (token ? '&token=' + token : '');
                 const response = await fetch(url);
                 const data = await response.json();
-                
+
                 attachmentsData = data.attachmentInfos || [];
                 renderGallery();
             } catch (error) {
@@ -206,7 +268,10 @@
                 renderGallery();
             }
         }
-        
+
+        // ================================================================
+        // UPDATE PROFILE DISPLAY
+        // ================================================================
         function updateProfileDisplay() {
             const name = currentFeature.attributes.Full_Name || 'Member';
             const org = currentFeature.attributes.Organization_Name || 'SJCA';
@@ -216,7 +281,10 @@
             document.getElementById('userAvatar').textContent = initials.toUpperCase();
             document.getElementById('profileInfo').style.display = 'flex';
         }
-        
+
+        // ================================================================
+        // RENDER GALLERY
+        // ================================================================
         function renderGallery() {
             const container = document.getElementById('galleryContainer');
             if (attachmentsData.length === 0 && newAttachmentsToUpload.length === 0) {
@@ -235,7 +303,10 @@
             container.innerHTML = html;
             document.getElementById('saveBtn').disabled = deletedAttachmentIds.length === 0 && newAttachmentsToUpload.length === 0;
         }
-        
+
+        // ================================================================
+        // DELETE ATTACHMENT
+        // ================================================================
         window.deleteAttachmentFn = function(id) {
             if (confirm('Delete this image?')) {
                 attachmentsData = attachmentsData.filter(a => a.id != id);
@@ -243,12 +314,15 @@
                 renderGallery();
             }
         };
-        
+
         window.removeNewAttachmentFn = function(i) {
             newAttachmentsToUpload.splice(i, 1);
             renderGallery();
         };
-        
+
+        // ================================================================
+        // FILE INPUT
+        // ================================================================
         document.getElementById('fileInput').addEventListener('change', (e) => {
             Array.from(e.target.files).forEach(f => {
                 if (f.size <= 5 * 1024 * 1024) newAttachmentsToUpload.push(f);
@@ -256,7 +330,7 @@
             renderGallery();
             document.getElementById('fileInput').value = '';
         });
-        
+
         const uploadZone = document.getElementById('uploadZone');
         uploadZone.addEventListener('click', () => document.getElementById('fileInput').click());
         uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
@@ -269,19 +343,25 @@
             document.getElementById('fileInput').files = dt.files;
             document.getElementById('fileInput').dispatchEvent(new Event('change'));
         });
-        
+
+        // ================================================================
+        // SAVE CHANGES
+        // ================================================================
         document.getElementById('saveBtn').addEventListener('click', async () => {
             try {
-                const token = localStorage.getItem('arcgis_token');
+                const credential = identityManager.findCredential(PORTAL_URL + "/sharing");
+                const token = credential ? credential.token : null;
+
                 if (!token) {
                     alert('Session expired. Please sign in again.');
                     return;
                 }
-                
+
                 document.getElementById('saveBtn').disabled = true;
                 const saveBtn = document.getElementById('saveBtn');
                 saveBtn.textContent = 'Saving...';
-                
+
+                // Delete attachments
                 for (const attachmentId of deletedAttachmentIds) {
                     const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/deleteAttachments';
                     await fetch(url, {
@@ -290,24 +370,25 @@
                         body: 'attachmentIds=' + attachmentId + '&token=' + token + '&f=json'
                     });
                 }
-                
+
+                // Add attachments
                 for (const file of newAttachmentsToUpload) {
                     const formData = new FormData();
                     formData.append('attachment', file);
                     formData.append('token', token);
                     formData.append('f', 'json');
-                    
+
                     const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/addAttachment';
                     await fetch(url, {
                         method: 'POST',
                         body: formData
                     });
                 }
-                
+
                 deletedAttachmentIds = [];
                 newAttachmentsToUpload = [];
-                
-                await loadAttachments(token);
+
+                await loadAttachments();
                 saveBtn.textContent = 'Save';
                 alert('✓ Changes saved!');
             } catch (error) {
@@ -317,7 +398,7 @@
                 document.getElementById('saveBtn').textContent = 'Save';
             }
         });
-        
+
         document.getElementById('cancelBtn').addEventListener('click', () => {
             if (confirm('Discard changes?')) {
                 deletedAttachmentIds = [];
@@ -325,26 +406,32 @@
                 renderGallery();
             }
         });
-        
+
+        // ================================================================
+        // UI HELPERS
+        // ================================================================
         function showLoading() {
             document.getElementById('loadingState').style.display = 'block';
             document.getElementById('contentState').style.display = 'none';
             document.getElementById('errorState').style.display = 'none';
         }
-        
+
         function showContent() {
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('contentState').style.display = 'block';
             document.getElementById('errorState').style.display = 'none';
         }
-        
+
         function showError(msg) {
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('contentState').style.display = 'none';
             document.getElementById('errorState').style.display = 'block';
             document.getElementById('errorMessage').textContent = msg;
         }
-        
+
+        // ================================================================
+        // START
+        // ================================================================
         init();
     </script>
 </body>
