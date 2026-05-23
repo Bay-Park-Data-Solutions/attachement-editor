@@ -117,52 +117,20 @@
         let deletedAttachmentIds = [];
 
         // ================================================================
-        // NOTEBOOK BACKEND URL
-        // ================================================================
-        const NOTEBOOK_URL = 'https://sjca.maps.arcgis.com/home/notebook/notebook.html?id=c24f9d20a1b545ca923bdf4b9e8d4b9b';
-
-        // ================================================================
-        // CALL NOTEBOOK FUNCTION
-        // ================================================================
-        async function callNotebook(functionName, params = {}) {
-            try {
-                // Build query string with function name and params
-                const queryString = new URLSearchParams({
-                    ...params,
-                    _function: functionName
-                }).toString();
-                
-                const url = `${NOTEBOOK_URL}&${queryString}`;
-                console.log(`Calling Notebook function: ${functionName}`, params);
-                
-                const response = await fetch(url, {
-                    credentials: 'include',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-                
-                const data = await response.json();
-                console.log(`✓ ${functionName} response:`, data);
-                return data;
-            } catch (error) {
-                console.error(`✗ ${functionName} error:`, error);
-                throw error;
-            }
-        }
-
-        // ================================================================
-        // GET CURRENT USER FROM NOTEBOOK
+        // GET CURRENT USER FROM PORTAL
         // ================================================================
         async function getToken() {
             try {
-                // Call the Notebook's get_current_user() function
-                const result = await callNotebook('get_current_user');
+                const response = await fetch('https://sjca.maps.arcgis.com/sharing/rest/community/self?f=json', {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                console.log('User response:', data);
                 
-                if (result.success && result.username) {
-                    return { username: result.username, fullName: result.fullName };
+                if (data.username) {
+                    return { username: data.username, fullName: data.fullName || data.username };
                 }
-                throw new Error('Failed to get user: ' + (result.error || 'unknown error'));
+                throw new Error('Not logged in or user data unavailable');
             } catch (error) {
                 console.error('Auth error:', error);
                 throw error;
@@ -184,31 +152,25 @@
         }
 
         // ================================================================
-        // GET USER PROFILE FROM NOTEBOOK
+        // GET USER PROFILE FROM FEATURE SERVICE
         // ================================================================
         async function loadUserProfile() {
             try {
-                // Call the Notebook's get_user_profile() function
-                const result = await callNotebook('get_user_profile', {
-                    username: currentUser.username
-                });
+                const whereClause = `username = '${currentUser.username}'`;
+                const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/query?where=${encodeURIComponent(whereClause)}&f=json&outFields=*`;
                 
-                if (!result.success) {
-                    throw new Error('Profile not found: ' + (result.error || 'unknown error'));
+                const response = await fetch(url, {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                
+                console.log('Profile:', data);
+
+                if (!data.features || data.features.length === 0) {
+                    throw new Error('Profile not found in system');
                 }
 
-                // Convert Notebook result to feature-like structure
-                currentFeature = {
-                    attributes: {
-                        OBJECTID: result.OBJECTID,
-                        Full_Name: result.Full_Name,
-                        Organization_Name: result.Organization_Name,
-                        username: result.username,
-                        GlobalID: result.GlobalID
-                    }
-                };
-                
-                console.log('Profile:', currentFeature);
+                currentFeature = data.features[0];
                 updateProfileDisplay();
                 await loadAttachments();
             } catch (error) {
@@ -217,22 +179,17 @@
         }
 
         // ================================================================
-        // GET ATTACHMENTS FROM NOTEBOOK
+        // GET ATTACHMENTS FROM FEATURE SERVICE
         // ================================================================
         async function loadAttachments() {
             try {
-                // Call the Notebook's get_attachments_for_feature() function
-                const result = await callNotebook('get_attachments_for_feature', {
-                    objectid: currentFeature.attributes.OBJECTID
+                const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/${currentFeature.attributes.OBJECTID}/attachments/query?f=json`;
+                const response = await fetch(url, {
+                    credentials: 'include'
                 });
+                const data = await response.json();
                 
-                if (result.success) {
-                    attachmentsData = result.attachmentInfos || [];
-                } else {
-                    console.warn('Failed to load attachments:', result.error);
-                    attachmentsData = [];
-                }
-                
+                attachmentsData = data.attachmentInfos || [];
                 renderGallery();
             } catch (error) {
                 console.error('Attachments error:', error);
@@ -284,21 +241,23 @@
         }
 
         // ================================================================
-        // DELETE ATTACHMENT VIA NOTEBOOK
+        // DELETE ATTACHMENT FROM FEATURE SERVICE
         // ================================================================
         async function deleteAttachmentToServer(objectid, attachment_id) {
             try {
-                const result = await callNotebook('delete_attachment', {
-                    objectid: objectid,
-                    attachment_id: attachment_id
+                const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/${objectid}/attachments/${attachment_id}`;
+                
+                const response = await fetch(url, {
+                    method: 'DELETE',
+                    credentials: 'include'
                 });
                 
-                if (result.success) {
-                    console.log('✓ Deleted attachment:', attachment_id);
-                    return true;
-                } else {
-                    throw new Error(result.error || 'Delete failed');
+                if (!response.ok) {
+                    throw new Error(`Delete failed: ${response.statusText}`);
                 }
+                
+                console.log('✓ Deleted attachment:', attachment_id);
+                return true;
             } catch (error) {
                 console.error('Delete error:', error);
                 throw error;
@@ -306,36 +265,30 @@
         }
 
         // ================================================================
-        // ADD ATTACHMENT VIA NOTEBOOK
+        // ADD ATTACHMENT TO FEATURE SERVICE
         // ================================================================
         async function addAttachmentToServer(objectid, file) {
             try {
-                // Convert file to base64
-                const reader = new FileReader();
-                return new Promise((resolve, reject) => {
-                    reader.onload = async () => {
-                        try {
-                            const base64 = reader.result.split(',')[1]; // Remove data:image/... prefix
-                            
-                            const result = await callNotebook('add_attachment', {
-                                objectid: objectid,
-                                file_base64: base64,
-                                filename: file.name
-                            });
-                            
-                            if (result.success) {
-                                console.log('✓ Added attachment:', file.name);
-                                resolve(true);
-                            } else {
-                                reject(new Error(result.error || 'Upload failed'));
-                            }
-                        } catch (error) {
-                            reject(error);
-                        }
-                    };
-                    reader.onerror = () => reject(new Error('File read failed'));
-                    reader.readAsDataURL(file);
+                const formData = new FormData();
+                formData.append('attachment', file);
+                formData.append('f', 'json');
+                
+                const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/${objectid}/addAttachment`;
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    credentials: 'include',
+                    body: formData
                 });
+                
+                const data = await response.json();
+                
+                if (data.addResults && data.addResults[0].success) {
+                    console.log('✓ Added attachment:', file.name);
+                    return true;
+                } else {
+                    throw new Error(data.addResults?.[0]?.error?.description || 'Upload failed');
+                }
             } catch (error) {
                 console.error('Upload error:', error);
                 throw error;
