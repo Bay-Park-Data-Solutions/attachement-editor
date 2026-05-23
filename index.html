@@ -118,16 +118,51 @@
     <input type="file" id="fileInput" accept="image/*" multiple>
 
     <script>
-        require(['esri/identity/OAuthInfo', 'esri/identity/IdentityManager', 'esri/request'], 
-            function(OAuthInfo, esriId, esriRequest) {
+        require(['esri/identity/OAuthInfo', 'esri/identity/IdentityManager'], 
+            function(OAuthInfo, esriId) {
             
             // ================================================================
             // CONFIGURATION
             // ================================================================
             const PORTAL_URL = 'https://sjca-hub.maps.arcgis.com';
             const FEATURE_SERVICE_URL = 'https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0';
-            const OAUTH_CLIENT_ID = '8otS7Td5TdxbVjOG';
             const OAUTH_APP_ID = '8otS7Td5TdxbVjOG';
+            
+            // ================================================================
+            // SETUP OAUTH
+            // ================================================================
+            const oAuthInfo = new OAuthInfo({
+                appId: OAUTH_APP_ID,
+                portalUrl: PORTAL_URL,
+                popup: true,
+                popupWindowFeatures: 'height=400,width=600'
+            });
+            
+            esriId.registerOAuthInfos([oAuthInfo]);
+            
+            // Handle token in URL (from OAuth redirect)
+            esriId.checkSignInStatus(PORTAL_URL + '/sharing/rest').then(
+                function() {
+                    console.log('✓ Already authenticated');
+                    init();
+                },
+                function() {
+                    console.log('Not authenticated');
+                    showError('Please sign in to manage your photos');
+                    document.getElementById('loginBtn').onclick = doLogin;
+                }
+            );
+            
+            async function doLogin() {
+                try {
+                    const credential = await esriId.getCredential(PORTAL_URL + '/sharing/rest');
+                    console.log('✓ Got credential:', credential.userId);
+                    init();
+                } catch (error) {
+                    console.error('Login failed:', error);
+                    showError('Login failed: ' + error.message);
+                }
+            }
             
             // ================================================================
             // STATE
@@ -139,56 +174,23 @@
             let deletedAttachmentIds = [];
             
             // ================================================================
-            // SETUP OAUTH
-            // ================================================================
-            const oAuthInfo = new OAuthInfo({
-                appId: OAUTH_APP_ID,
-                portalUrl: PORTAL_URL,
-                popup: true
-            });
-            
-            esriId.registerOAuthInfos([oAuthInfo]);
-            
-            // ================================================================
             // INIT
             // ================================================================
             async function init() {
                 try {
                     showLoading();
                     
-                    // Check if user is already signed in
-                    try {
-                        const user = esriId.findOAuthInfo(PORTAL_URL);
-                        const credential = await esriId.checkSignInStatus(PORTAL_URL + '/sharing/rest');
-                        
-                        if (credential && credential.userId) {
-                            currentUser = { username: credential.userId };
-                            console.log('✓ Already signed in as:', currentUser.username);
-                            await loadUserProfile();
-                            showContent();
-                            return;
-                        }
-                    } catch (e) {
-                        console.log('Not signed in');
+                    // Get signed-in user
+                    const credential = esriId.findCredential(PORTAL_URL + '/sharing/rest');
+                    if (!credential) {
+                        throw new Error('No credential found');
                     }
                     
-                    // Not signed in - show login button
-                    showError('Please sign in to manage your photos');
+                    currentUser = { username: credential.userId };
+                    console.log('✓ Current user:', currentUser.username);
                     
-                    document.getElementById('loginBtn').onclick = async () => {
-                        try {
-                            const credential = await esriId.getCredential(PORTAL_URL + '/sharing/rest', { oAuthPopupConfirmation: false });
-                            currentUser = { username: credential.userId };
-                            console.log('✓ Signed in as:', currentUser.username);
-                            showLoading();
-                            await loadUserProfile();
-                            showContent();
-                        } catch (error) {
-                            console.error('Login error:', error);
-                            showError('Login failed: ' + error.message);
-                        }
-                    };
-                    
+                    await loadUserProfile();
+                    showContent();
                 } catch (error) {
                     console.error('Init error:', error);
                     showError('Error: ' + error.message);
@@ -203,16 +205,19 @@
                     const whereClause = `username = '${currentUser.username}'`;
                     const url = FEATURE_SERVICE_URL + '/query?where=' + encodeURIComponent(whereClause) + '&f=json&outFields=*';
                     
-                    const response = await esriRequest({
-                        url: url,
-                        content: { f: 'json' }
+                    const response = await fetch(url, {
+                        credentials: 'include'
                     });
+                    const data = await response.json();
                     
-                    const data = response.data;
-                    console.log('Profile:', data);
+                    console.log('Profile response:', data);
+                    
+                    if (data.error) {
+                        throw new Error('Feature Service error: ' + data.error.message);
+                    }
                     
                     if (!data.features || data.features.length === 0) {
-                        throw new Error('Profile not found in system');
+                        throw new Error('Profile not found for user: ' + currentUser.username);
                     }
                     
                     currentFeature = data.features[0];
@@ -229,12 +234,12 @@
             async function loadAttachments() {
                 try {
                     const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/attachments/query?f=json';
-                    const response = await esriRequest({
-                        url: url,
-                        content: { f: 'json' }
+                    const response = await fetch(url, {
+                        credentials: 'include'
                     });
+                    const data = await response.json();
                     
-                    attachmentsData = response.data.attachmentInfos || [];
+                    attachmentsData = data.attachmentInfos || [];
                     renderGallery();
                 } catch (error) {
                     console.error('Attachments error:', error);
@@ -330,10 +335,11 @@
                     // Delete removed attachments
                     for (const attachmentId of deletedAttachmentIds) {
                         const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/deleteAttachments';
-                        await esriRequest({
-                            url: url,
-                            content: { attachmentIds: [attachmentId], f: 'json' },
-                            handleAs: 'json'
+                        await fetch(url, {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: 'attachmentIds=' + attachmentId + '&f=json'
                         });
                     }
                     
@@ -346,6 +352,7 @@
                         const url = FEATURE_SERVICE_URL + '/' + currentFeature.attributes.OBJECTID + '/addAttachment';
                         await fetch(url, {
                             method: 'POST',
+                            credentials: 'include',
                             body: formData
                         });
                     }
@@ -393,12 +400,8 @@
                 document.getElementById('errorState').style.display = 'block';
                 document.getElementById('errorMessage').textContent = msg;
             }
-            
-            // ================================================================
-            // START
-            // ================================================================
-            init();
         });
+    </script>
     </script>
 </body>
 </html>
