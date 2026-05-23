@@ -137,6 +137,8 @@
     </div>
 
     <input type="file" id="fileInput" accept="image/*,.pdf" multiple>
+    <!-- Hidden iframe for OAuth -->
+    <iframe id="oauthFrame" style="display: none;"></iframe>
 
     <script>
         const CONFIG = {
@@ -192,11 +194,24 @@
         }
 
         function initiateOAuthLogin() {
-            console.log('Initiating OAuth login...');
+            console.log('Initiating OAuth login via hidden iframe...');
             const redirectUri = encodeURIComponent(CONFIG.oauthCallbackUrl);
             const oauthUrl = `${CONFIG.portalUrl}/sharing/oauth2/authorize?client_id=${CONFIG.oauthClientId}&response_type=token&expiration=20160&redirect_uri=${redirectUri}`;
-            console.log('Redirecting to:', oauthUrl);
-            window.location.href = oauthUrl;
+            console.log('Loading OAuth in hidden iframe');
+            
+            // Load OAuth in hidden iframe to avoid X-Frame-Options block
+            const iframe = document.getElementById('oauthFrame');
+            iframe.src = oauthUrl;
+            
+            // When user completes OAuth, callback URL redirects which triggers our callback
+            // We'll check for token in a moment
+            setTimeout(() => {
+                const token = getStoredToken();
+                if (token) {
+                    console.log('✓ Token received from OAuth flow');
+                    init();
+                }
+            }, 500);
         }
 
         async function init() {
@@ -316,7 +331,7 @@
         }
 
         function updateProfileDisplay() {
-            const memberName = currentFeature.attributes.full_name || 'Member';
+            const memberName = currentFeature.attributes.Full_Name || 'Member';
             const memberOrg = currentFeature.attributes.Organization_Name || 'SJCA';
             const initials = (memberName.charAt(0) || 'M') + (memberName.split(' ')[1]?.charAt(0) || 'M');
 
