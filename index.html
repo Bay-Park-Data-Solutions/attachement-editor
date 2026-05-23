@@ -118,12 +118,15 @@
 
         async function getToken() {
             try {
-                const response = await fetch('https://sjca.maps.arcgis.com/sharing/rest/community/self?f=json');
+                const response = await fetch('https://sjca.maps.arcgis.com/sharing/rest/community/self?f=json', {
+                    credentials: 'include'  // Include cookies from Portal session
+                });
                 const data = await response.json();
+                console.log('Self response:', data);
                 if (data.username) {
                     return { username: data.username, fullName: data.fullName || data.username };
                 }
-                throw new Error('No username in response');
+                throw new Error('No username in response: ' + JSON.stringify(data));
             } catch (error) {
                 console.error('Auth error:', error);
                 throw error;
@@ -149,7 +152,9 @@
                 const whereClause = `username = '${currentUser.username}'`;
                 const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/query?where=${encodeURIComponent(whereClause)}&f=json&outFields=*`;
                 
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    credentials: 'include'
+                });
                 const data = await response.json();
                 
                 console.log('Profile:', data);
@@ -169,7 +174,9 @@
         async function loadAttachments() {
             try {
                 const url = `https://services7.arcgis.com/UaVN7e7yRdPuUqVj/arcgis/rest/services/SJCA_Member_Attachement_editor/FeatureServer/0/${currentFeature.attributes.OBJECTID}/attachments/query?f=json`;
-                const response = await fetch(url);
+                const response = await fetch(url, {
+                    credentials: 'include'
+                });
                 const data = await response.json();
                 
                 attachmentsData = data.attachmentInfos || [];
